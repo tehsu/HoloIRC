@@ -29,8 +29,8 @@ import com.fusionx.lightirc.misc.FragmentType;
 import com.fusionx.lightirc.util.FragmentUtils;
 import com.fusionx.relay.Channel;
 import com.fusionx.relay.WorldUser;
-import com.fusionx.relay.event.channel.NameEvent;
-import com.fusionx.relay.event.channel.WorldUserEvent;
+import com.fusionx.relay.event.channel.ChannelNameEvent;
+import com.fusionx.relay.event.channel.ChannelWorldUserEvent;
 import com.fusionx.relay.misc.IRCUserComparator;
 
 import android.app.Activity;
@@ -141,6 +141,8 @@ public class UserListFragment extends Fragment implements AbsListView.MultiChoic
         if (mChannel != null) {
             mChannel.getServer().getServerEventBus().unregister(this);
         }
+        // Don't keep a track of this channel - we will deal with this when we return
+        mChannel = null;
     }
 
     public void onUpdateUserList() {
@@ -167,14 +169,14 @@ public class UserListFragment extends Fragment implements AbsListView.MultiChoic
      * event is referring to
      */
     @SuppressWarnings("unused")
-    public void onEventMainThread(final WorldUserEvent event) {
+    public void onEventMainThread(final ChannelWorldUserEvent event) {
         if (event.channel.equals(mChannel) && event.isUserListChangeEvent()) {
             onUpdateUserList();
         }
     }
 
     @SuppressWarnings("unused")
-    public void onEventMainThread(final NameEvent event) {
+    public void onEventMainThread(final ChannelNameEvent event) {
         if (event.channel.equals(mChannel)) {
             onUpdateUserList();
         }
@@ -274,7 +276,7 @@ public class UserListFragment extends Fragment implements AbsListView.MultiChoic
 
     private void onPrivateMessageUser(final String nick) {
         if (isNickOtherUsers(nick)) {
-            mChannel.getServer().getServerCallBus().sendMessageToUser(nick, "");
+            mChannel.getServer().getServerCallBus().sendMessageToQueryUser(nick, "");
             mCallback.closeDrawer();
             mActionMode.finish();
         } else {

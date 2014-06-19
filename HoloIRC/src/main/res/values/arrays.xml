@@ -34,6 +34,7 @@
         <item>@string/action_join_channel</item>
         <item>@string/action_change_nick</item>
         <item>@string/action_ignore_list</item>
+        <item>@string/action_pending_invites</item>
         <item>@string/action_disconnect</item>
         <item>@string/action_reconnect</item>
     </string-array>
@@ -84,6 +85,17 @@
     <string-array name="notification_out_values_no_vibrator">
         <item>@string/notification_value_audio</item>
         <item>@string/notification_value_lights</item>
+    </string-array>
+
+    <string-array name="font_size_entries">
+        <item>@string/appearance_small_font_size</item>
+        <item>@string/appearance_medium_font_size</item>
+        <item>@string/appearance_large_font_size</item>
+    </string-array>
+    <string-array name="font_size_values">
+        <item>12</item>
+        <item>14</item>
+        <item>16</item>
     </string-array>
 
     <string-array name="empty_array"/>

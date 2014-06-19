@@ -13,18 +13,18 @@ import com.fusionx.lightirc.service.IRCService;
 import com.fusionx.lightirc.util.EventUtils;
 import com.fusionx.relay.Channel;
 import com.fusionx.relay.ConnectionStatus;
-import com.fusionx.relay.PrivateMessageUser;
+import com.fusionx.relay.QueryUser;
 import com.fusionx.relay.Server;
 import com.fusionx.relay.event.channel.ChannelEvent;
+import com.fusionx.relay.event.query.QueryEvent;
 import com.fusionx.relay.event.server.ConnectEvent;
 import com.fusionx.relay.event.server.DisconnectEvent;
 import com.fusionx.relay.event.server.JoinEvent;
 import com.fusionx.relay.event.server.KickEvent;
-import com.fusionx.relay.event.server.NewPrivateMessage;
+import com.fusionx.relay.event.server.NewPrivateMessageEvent;
 import com.fusionx.relay.event.server.PartEvent;
 import com.fusionx.relay.event.server.PrivateMessageClosedEvent;
 import com.fusionx.relay.event.server.StopEvent;
-import com.fusionx.relay.event.user.UserEvent;
 import com.fusionx.relay.interfaces.Conversation;
 
 import android.app.Activity;
@@ -189,13 +189,6 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
         return true;
     }
 
-    void onEditServer(final ServerWrapper builder) {
-        final Intent intent = new Intent(getActivity(), ServerPreferenceActivity.class);
-        intent.putExtra(ServerPreferenceActivity.NEW_SERVER, false);
-        intent.putExtra(ServerPreferenceActivity.SERVER, builder.getBuilder());
-        getActivity().startActivityForResult(intent, MainActivity.SERVER_SETTINGS);
-    }
-
     @Override
     public void onItemCheckedStateChanged(ActionMode mode, int position, long id, boolean checked) {
         if (!checked) {
@@ -223,23 +216,28 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
     public boolean onPrepareActionMode(final ActionMode mode, final Menu menu) {
         if (mSelectionType == ExpandableListView.PACKED_POSITION_TYPE_GROUP) {
             final int count = mListView.getCheckedItemCount();
-            final boolean singleItemChecked = count == 1;
-            final boolean connected = count > 0 && getFirstCheckedItem().isConnected();
+            final boolean connected = count > 0 && getFirstCheckedItem().isServerAvailable();
 
-            menu.findItem(R.id.activity_server_list_popup_edit).setVisible(singleItemChecked &&
-                    !connected);
-
+            boolean allConnected = connected;
             boolean deleteEnabled = !connected;
-            for (int i = 1; i < count && deleteEnabled; i++) {
+            for (int i = 1; i < count && (deleteEnabled || allConnected); i++) {
                 final int pos = mListView.getCheckedItemPositions().keyAt(i);
                 final ServerWrapper listItem = (ServerWrapper) mListView
                         .getItemAtPosition(pos);
-                deleteEnabled = !listItem.isConnected();
+                final boolean available = listItem.isServerAvailable();
+                allConnected = allConnected && available;
+                deleteEnabled = deleteEnabled && !available;
             }
+            menu.findItem(R.id.activity_server_list_popup_disconnect).setVisible(allConnected);
             menu.findItem(R.id.activity_server_list_popup_delete).setVisible(deleteEnabled);
+
+            final boolean singleItemChecked = count == 1;
+            menu.findItem(R.id.activity_server_list_popup_edit).setVisible(singleItemChecked &&
+                    !connected);
         } else {
             menu.findItem(R.id.activity_server_list_popup_edit).setVisible(false);
             menu.findItem(R.id.activity_server_list_popup_delete).setVisible(false);
+            menu.findItem(R.id.activity_server_list_popup_disconnect).setVisible(false);
         }
 
         return true;
@@ -250,11 +248,14 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
         final ServerWrapper listItem = getFirstCheckedItem();
 
         switch (item.getItemId()) {
+            case R.id.activity_server_list_popup_disconnect:
+                disconnectFromServer(getCheckedPositions(mListView));
+                break;
             case R.id.activity_server_list_popup_delete:
-                onDeleteServer(getCheckedPositions(mListView));
+                deleteServer(getCheckedPositions(mListView));
                 break;
             case R.id.activity_server_list_popup_edit:
-                onEditServer(listItem);
+                editServer(listItem);
         }
 
         mode.finish();
@@ -265,6 +266,24 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
         mService = service;
 
         refreshServers();
+    }
+
+    @Override
+    public void onDestroyActionMode(final ActionMode mode) {
+        mActionMode = null;
+    }
+
+    void editServer(final ServerWrapper builder) {
+        final Intent intent = new Intent(getActivity(), ServerPreferenceActivity.class);
+        intent.putExtra(ServerPreferenceActivity.NEW_SERVER, false);
+        intent.putExtra(ServerPreferenceActivity.SERVER, builder.getBuilder());
+        getActivity().startActivityForResult(intent, MainActivity.SERVER_SETTINGS);
+    }
+
+    private void disconnectFromServer(final List<Integer> checkedPositions) {
+        for (final Integer checkedPosition : checkedPositions) {
+            mService.requestConnectionStoppage(mListAdapter.getGroup(checkedPosition).getServer());
+        }
     }
 
     private boolean onServerClick(final int groupPosition) {
@@ -289,7 +308,7 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
         return true;
     }
 
-    private void onDeleteServer(final List<Integer> checkedPositions) {
+    private void deleteServer(final List<Integer> checkedPositions) {
         final AsyncTask<Void, Void, Void> asyncTask = new AsyncTask<Void, Void, Void>() {
 
             private BuilderDatabaseSource source;
@@ -316,11 +335,6 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
             }
         };
         asyncTask.execute();
-    }
-
-    @Override
-    public void onDestroyActionMode(final ActionMode mode) {
-        mActionMode = null;
     }
 
     private ServerWrapper getFirstCheckedItem() {
@@ -385,7 +399,7 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
 
         public void onSubServerClicked(final Conversation object);
 
-        public void onServerStopCompleteted(final Server server);
+        public void onServerStopCompleted(final Server server);
 
         public IRCService getService();
 
@@ -410,9 +424,9 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
         }
 
         @SuppressWarnings("unused")
-        public void onEventMainThread(final NewPrivateMessage event) throws InterruptedException {
-            final PrivateMessageUser user = mServer.getUserChannelInterface()
-                    .getPrivateMessageUser(event.nick);
+        public void onEventMainThread(final NewPrivateMessageEvent event) throws InterruptedException {
+            final QueryUser user = mServer.getUserChannelInterface()
+                    .getQueryUser(event.nick);
             mListAdapter.getGroup(mServerIndex).addServerObject(user);
             mListAdapter.notifyDataSetChanged();
             mListView.expandGroup(mServerIndex);
@@ -465,7 +479,7 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
         }
 
         @SuppressWarnings("unused")
-        public void onEventMainThread(final UserEvent event) {
+        public void onEventMainThread(final QueryEvent event) {
             if (mServer.getStatus() != ConnectionStatus.DISCONNECTED) {
                 mListView.invalidateViews();
             }
@@ -488,7 +502,7 @@ public class ServerListFragment extends Fragment implements ExpandableListView.O
                 public void run() {
                     unregister();
                     mEventHandlers.remove(ServerEventHandler.this);
-                    mCallback.onServerStopCompleteted(mServer);
+                    mCallback.onServerStopCompleted(mServer);
                 }
             });
         }

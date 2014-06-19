@@ -5,10 +5,10 @@ import com.google.common.collect.ImmutableList;
 import com.fusionx.lightirc.misc.AppPreferences;
 import com.fusionx.relay.event.Event;
 import com.fusionx.relay.event.channel.ChannelEvent;
-import com.fusionx.relay.event.channel.NameEvent;
-import com.fusionx.relay.event.channel.WorldUserEvent;
+import com.fusionx.relay.event.channel.ChannelNameEvent;
+import com.fusionx.relay.event.channel.ChannelWorldUserEvent;
 import com.fusionx.relay.event.server.JoinEvent;
-import com.fusionx.relay.event.server.NewPrivateMessage;
+import com.fusionx.relay.event.server.NewPrivateMessageEvent;
 import com.fusionx.relay.event.server.PartEvent;
 import com.fusionx.relay.event.server.PrivateMessageClosedEvent;
 import com.fusionx.relay.event.server.ServerEvent;
@@ -20,16 +20,16 @@ public class EventUtils {
 
     private static final ImmutableList<? extends Class<? extends ServerEvent>>
             sServerIgnoreClasses = ImmutableList.of(JoinEvent.class, PartEvent.class,
-            NewPrivateMessage.class, PrivateMessageClosedEvent.class, StatusChangeEvent.class);
+            NewPrivateMessageEvent.class, PrivateMessageClosedEvent.class, StatusChangeEvent.class);
 
     private static final ImmutableList<? extends Class<? extends ChannelEvent>>
-            sChannelIgnoreClasses = ImmutableList.of(NameEvent.class);
+            sChannelIgnoreClasses = ImmutableList.of(ChannelNameEvent.class);
 
     public static boolean shouldStoreEvent(final Event event) {
-        if (event instanceof WorldUserEvent) {
-            final WorldUserEvent worldUserEvent = (WorldUserEvent) event;
-            if (worldUserEvent.isUserListChangeEvent()) {
-                return !AppPreferences.getAppPreferences().isHideUserMessages();
+        if (event instanceof ChannelWorldUserEvent) {
+            final ChannelWorldUserEvent channelWorldUserEvent = (ChannelWorldUserEvent) event;
+            if (channelWorldUserEvent.isUserListChangeEvent()) {
+                return !AppPreferences.getAppPreferences().shouldHideUserMessages();
             }
         } else if (event instanceof ServerEvent) {
             final ServerEvent serverEvent = (ServerEvent) event;

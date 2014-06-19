@@ -1,11 +1,11 @@
 package com.fusionx.lightirc.adapters;
 
+import com.google.common.collect.ImmutableList;
+
 import com.fusionx.lightirc.R;
 import com.fusionx.lightirc.misc.AppPreferences;
 import com.fusionx.lightirc.misc.EventCache;
-import com.fusionx.lightirc.model.EventDecorator;
 import com.fusionx.lightirc.util.EventUtils;
-import com.fusionx.lightirc.util.MessageConversionUtils;
 import com.fusionx.lightirc.util.UIUtils;
 import com.fusionx.relay.event.Event;
 
@@ -32,7 +32,7 @@ public class IRCMessageAdapter<T extends Event> extends BaseAdapter implements F
 
     private boolean mShouldFilter;
 
-    private Filter mFilter;
+    private IRCFilter mFilter;
 
     private List<T> mObjects;
 
@@ -87,18 +87,21 @@ public class IRCMessageAdapter<T extends Event> extends BaseAdapter implements F
         notifyDataSetChanged();
     }
 
-    public void setData(final List<T> list) {
-        synchronized (mLock) {
-            mObjects = new ArrayList<>(list);
-        }
-        notifyDataSetChanged();
+    public void setData(final List<T> list, final Runnable runnable) {
         if (mShouldFilter) {
+            getFilter().setDataToFilter(list);
+            getFilter().setCallback(runnable);
             getFilter().filter(null);
+        } else {
+            synchronized (mLock) {
+                mObjects = new ArrayList<>(list);
+            }
+            notifyDataSetChanged();
         }
     }
 
     @Override
-    public Filter getFilter() {
+    public IRCFilter getFilter() {
         if (mFilter == null) {
             mFilter = new IRCFilter();
         }
@@ -116,9 +119,11 @@ public class IRCMessageAdapter<T extends Event> extends BaseAdapter implements F
 
         final TextView timestamp = (TextView) view.findViewById(R.id.timestamp);
         UIUtils.setRobotoLight(mContext, timestamp);
+        timestamp.setTextSize(AppPreferences.getAppPreferences().getMainFontSize());
 
         final TextView message = (TextView) view.findViewById(R.id.message);
         UIUtils.setRobotoLight(mContext, message);
+        message.setTextSize(AppPreferences.getAppPreferences().getMainFontSize());
 
         final ViewHolder holder = new ViewHolder(timestamp, message);
         view.setTag(holder);
@@ -127,7 +132,7 @@ public class IRCMessageAdapter<T extends Event> extends BaseAdapter implements F
     }
 
     private void addTimestampIfRequired(ViewHolder holder, final Event event) {
-        if (AppPreferences.getAppPreferences().isTimestamp()) {
+        if (AppPreferences.getAppPreferences().shouldDisplayTimestamps()) {
             holder.timestamp.setVisibility(View.VISIBLE);
             holder.timestamp.setText(event.timestamp.format("%H:%M"));
         } else {
@@ -149,14 +154,24 @@ public class IRCMessageAdapter<T extends Event> extends BaseAdapter implements F
 
     private class IRCFilter extends Filter {
 
+        private List<T> mDataToFilter = new ArrayList<>();
+
+        private Runnable mCallback;
+
+        public void setDataToFilter(final List<T> list) {
+            mDataToFilter = ImmutableList.copyOf(list);
+        }
+
+        public void setCallback(Runnable callback) {
+            mCallback = callback;
+        }
+
         @Override
         protected FilterResults performFiltering(final CharSequence constraint) {
             final ArrayList<T> resultList = new ArrayList<>();
-            synchronized (mLock) {
-                for (final T object : mObjects) {
-                    if (EventUtils.shouldStoreEvent(object)) {
-                        resultList.add(object);
-                    }
+            for (final T object : mDataToFilter) {
+                if (EventUtils.shouldStoreEvent(object)) {
+                    resultList.add(object);
                 }
             }
 
@@ -171,6 +186,9 @@ public class IRCMessageAdapter<T extends Event> extends BaseAdapter implements F
         protected void publishResults(final CharSequence constraint, final FilterResults results) {
             mObjects = (List<T>) results.values;
             notifyDataSetChanged();
+            if (mCallback != null) {
+                mCallback.run();
+            }
         }
     }
 }

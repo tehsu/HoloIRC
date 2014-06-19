@@ -28,8 +28,13 @@ import se.emilsjolander.stickylistheaders.StickyListHeadersAdapter;
  * first shown. The Animators applied include the animations specified in getAnimators(ViewGroup,
  * View), plus an alpha transition.
  */
-public class DecoratedIgnoreListAdapter extends BaseAdapterDecorator
-        implements StickyListHeadersAdapter {
+public class DecoratedIgnoreListAdapter extends BaseAdapterDecorator implements
+        StickyListHeadersAdapter {
+
+    /**
+     * The {@link android.widget.BaseAdapter} this {@code BaseAdapterDecorator} decorates.
+     */
+    private final BaseAdapter mDecoratedBaseAdapter;
 
     private static final long DEFAULTANIMATIONDELAYMILLIS = 100;
 
@@ -54,6 +59,7 @@ public class DecoratedIgnoreListAdapter extends BaseAdapterDecorator
     public DecoratedIgnoreListAdapter(BaseAdapter baseAdapter, OnDismissCallback callback) {
         super(baseAdapter);
         mAnimators = new SparseArray<>();
+        mDecoratedBaseAdapter = baseAdapter;
 
         mAnimationStartMillis = -1;
         mLastAnimatedPosition = -1;
@@ -329,6 +335,13 @@ public class DecoratedIgnoreListAdapter extends BaseAdapterDecorator
         // System.out.println(isHeader + ": " + delay);
 
         return Math.max(0, delay);
+    }
+
+    /**
+     * Returns the {@link android.widget.BaseAdapter} that this {@code BaseAdapterDecorator} decorates.
+     */
+    public BaseAdapter getDecoratedBaseAdapter() {
+        return mDecoratedBaseAdapter;
     }
 
     private void invokeCallback(Collection<Integer> positions) {

@@ -3,49 +3,61 @@ package com.fusionx.lightirc.service;
 import com.fusionx.bus.Subscribe;
 import com.fusionx.lightirc.event.OnChannelMentionEvent;
 import com.fusionx.lightirc.event.OnConversationChanged;
+import com.fusionx.lightirc.event.OnQueryEvent;
 import com.fusionx.lightirc.model.MessagePriority;
 import com.fusionx.relay.Channel;
-import com.fusionx.relay.PrivateMessageUser;
+import com.fusionx.relay.QueryUser;
 import com.fusionx.relay.Server;
 import com.fusionx.relay.event.Event;
 import com.fusionx.relay.event.channel.ChannelEvent;
-import com.fusionx.relay.event.channel.WorldActionEvent;
-import com.fusionx.relay.event.channel.WorldMessageEvent;
-import com.fusionx.relay.event.channel.WorldUserEvent;
+import com.fusionx.relay.event.channel.ChannelWorldActionEvent;
+import com.fusionx.relay.event.channel.ChannelWorldMessageEvent;
+import com.fusionx.relay.event.channel.ChannelWorldUserEvent;
+import com.fusionx.relay.event.query.QueryEvent;
+import com.fusionx.relay.event.server.InviteEvent;
 import com.fusionx.relay.event.server.JoinEvent;
-import com.fusionx.relay.event.server.NewPrivateMessage;
-import com.fusionx.relay.event.user.UserEvent;
+import com.fusionx.relay.event.server.NewPrivateMessageEvent;
 import com.fusionx.relay.interfaces.Conversation;
 
 import android.os.Handler;
 import android.os.Looper;
 
-import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+
+import gnu.trove.map.hash.THashMap;
+import gnu.trove.set.hash.THashSet;
 
 import static com.fusionx.lightirc.util.EventUtils.getLastStorableEvent;
 import static com.fusionx.lightirc.util.EventUtils.shouldStoreEvent;
 import static com.fusionx.lightirc.util.MiscUtils.getBus;
 
-public final class ServiceEventHelper {
+/**
+ * Intercepts IRC events which need some special action performed on
+ */
+public final class ServiceEventInterceptor {
 
     private static final int EVENT_PRIORITY = 100;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
 
-    private final HashMap<Conversation, MessagePriority> mMessagePriorityMap;
-
-    private final HashMap<Conversation, Event> mEventMap;
-
     private final Server mServer;
+
+    private final Map<Conversation, MessagePriority> mMessagePriorityMap;
+
+    private final Map<Conversation, Event> mEventMap;
+
+    private final Set<InviteEvent> mInviteEvents;
 
     private Conversation mConversation;
 
     private MessagePriority mMessagePriority;
 
-    public ServiceEventHelper(final Server server) {
+    public ServiceEventInterceptor(final Server server) {
         mServer = server;
-        mMessagePriorityMap = new HashMap<>();
-        mEventMap = new HashMap<>();
+        mMessagePriorityMap = new THashMap<>();
+        mEventMap = new THashMap<>();
+        mInviteEvents = new THashSet<>();
 
         getBus().registerSticky(new Object() {
             @Subscribe
@@ -61,14 +73,6 @@ public final class ServiceEventHelper {
         mServer.getServerEventBus().unregister(this);
     }
 
-    public void clearMessagePriority() {
-        mMessagePriority = null;
-    }
-
-    public void clearMessagePriority(final Conversation conversation) {
-        mMessagePriorityMap.remove(conversation);
-    }
-
     public MessagePriority getSubMessagePriority(final Conversation title) {
         return mMessagePriorityMap.get(title);
     }
@@ -81,16 +85,24 @@ public final class ServiceEventHelper {
         return mMessagePriority;
     }
 
-    private void setMessagePriority(final MessagePriority priority) {
-        if (mMessagePriority == null || mMessagePriority.compareTo(priority) < 0) {
-            mMessagePriority = priority;
-        }
+    public void clearMessagePriority() {
+        mMessagePriority = null;
     }
 
+    public void clearMessagePriority(final Conversation conversation) {
+        mMessagePriorityMap.remove(conversation);
+    }
+
+    public Set<InviteEvent> getInviteEvents() {
+        return mInviteEvents;
+    }
+
+    /*
+     * Event interception start here
+     */
     @SuppressWarnings("unused")
-    public void onEventMainThread(final NewPrivateMessage event) {
-        final PrivateMessageUser user = mServer.getUserChannelInterface().getPrivateMessageUser(
-                event.nick);
+    public void onEventMainThread(final NewPrivateMessageEvent event) {
+        final QueryUser user = mServer.getUserChannelInterface().getQueryUser(event.nick);
         onIRCEvent(MessagePriority.HIGH, user, getLastStorableEvent(user.getBuffer()));
     }
 
@@ -102,11 +114,11 @@ public final class ServiceEventHelper {
 
     @SuppressWarnings("unused")
     public void onEventMainThread(final ChannelEvent event) {
-        final Conversation conversation = event.channel;
         if (shouldStoreEvent(event)) {
             // TODO - fix this horrible code
-            if (event instanceof WorldUserEvent) {
-                final WorldUserEvent userEvent = (WorldUserEvent) event;
+            final Conversation conversation = event.channel;
+            if (event instanceof ChannelWorldUserEvent) {
+                final ChannelWorldUserEvent userEvent = (ChannelWorldUserEvent) event;
 
                 if (userEvent.userMentioned) {
                     onIRCEvent(MessagePriority.HIGH, conversation, event);
@@ -115,12 +127,11 @@ public final class ServiceEventHelper {
                     mHandler.post(new Runnable() {
                         @Override
                         public void run() {
-                            getBus().post(new OnChannelMentionEvent(mServer,
-                                    (Channel) conversation));
+                            getBus().post(new OnChannelMentionEvent(event.channel));
                         }
                     });
-                } else if (event.getClass().equals(WorldMessageEvent.class)
-                        || event.getClass().equals(WorldActionEvent.class)) {
+                } else if (event.getClass().equals(ChannelWorldMessageEvent.class)
+                        || event.getClass().equals(ChannelWorldActionEvent.class)) {
                     onIRCEvent(MessagePriority.MEDIUM, conversation, event);
                 } else {
                     onIRCEvent(MessagePriority.LOW, conversation, event);
@@ -132,21 +143,27 @@ public final class ServiceEventHelper {
     }
 
     @SuppressWarnings("unused")
-    public void onEventMainThread(final UserEvent event) {
-        onIRCEvent(MessagePriority.HIGH, event.user, event);
-    }
+    public void onEventMainThread(final QueryEvent event) {
+        if (shouldStoreEvent(event)) {
+            onIRCEvent(MessagePriority.HIGH, event.user, event);
 
-    private void setSubMessagePriority(final Conversation conversation,
-            final MessagePriority priority) {
-        final MessagePriority oldPriority = mMessagePriorityMap.get(conversation);
-        if (oldPriority == null || oldPriority.compareTo(priority) < 0) {
-            mMessagePriorityMap.put(conversation, priority);
+            // Forward the event UI side
+            mHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    getBus().post(new OnQueryEvent(event.user));
+                }
+            });
         }
     }
 
-    private void setSubEvent(final Conversation title, final Event event) {
-        mEventMap.put(title, event);
+    @SuppressWarnings("unused")
+    public void onEventMainThread(final InviteEvent event) {
+        mInviteEvents.add(event);
     }
+    /*
+     * Event interception ends here
+     */
 
     private void onIRCEvent(final MessagePriority priority, final Conversation conversation,
             final Event event) {
@@ -161,6 +178,24 @@ public final class ServiceEventHelper {
                 setSubMessagePriority(conversation, priority);
                 setSubEvent(conversation, event);
             }
+        }
+    }
+
+    private void setSubMessagePriority(final Conversation conversation,
+            final MessagePriority priority) {
+        final MessagePriority oldPriority = mMessagePriorityMap.get(conversation);
+        if (oldPriority == null || oldPriority.compareTo(priority) < 0) {
+            mMessagePriorityMap.put(conversation, priority);
+        }
+    }
+
+    private void setSubEvent(final Conversation title, final Event event) {
+        mEventMap.put(title, event);
+    }
+
+    private void setMessagePriority(final MessagePriority priority) {
+        if (mMessagePriority == null || mMessagePriority.compareTo(priority) < 0) {
+            mMessagePriority = priority;
         }
     }
 }

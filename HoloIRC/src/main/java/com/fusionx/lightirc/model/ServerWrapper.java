@@ -2,7 +2,7 @@ package com.fusionx.lightirc.model;
 
 import com.fusionx.relay.Channel;
 import com.fusionx.relay.ConnectionStatus;
-import com.fusionx.relay.PrivateMessageUser;
+import com.fusionx.relay.QueryUser;
 import com.fusionx.relay.Server;
 import com.fusionx.relay.interfaces.Conversation;
 
@@ -10,7 +10,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.List;
 
 import static com.fusionx.relay.ServerConfiguration.Builder;
 
@@ -33,8 +32,10 @@ public class ServerWrapper {
         setServer(server);
     }
 
-    public boolean isConnected() {
-        return mServer != null && mServer.getStatus() == ConnectionStatus.CONNECTED;
+    public boolean isServerAvailable() {
+        return mServer != null &&
+                (mServer.getStatus() == ConnectionStatus.CONNECTED
+                        || mServer.getStatus() == ConnectionStatus.RECONNECTING);
     }
 
     public String getTitle() {
@@ -48,12 +49,12 @@ public class ServerWrapper {
     public void setServer(final Server server) {
         mServer = server;
 
-        if (isConnected()) {
+        if (isServerAvailable()) {
             for (final Channel channel : server.getUser().getChannels()) {
                 mServerObjects.put(channel.getName(), channel);
             }
-            for (final PrivateMessageUser user : server.getUserChannelInterface()
-                    .getPrivateMessageUsers()) {
+            for (final QueryUser user : server.getUserChannelInterface()
+                    .getQueryUsers()) {
                 mServerObjects.put(user.getNick().getNickAsString(), user);
             }
         }

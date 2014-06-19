@@ -4,6 +4,7 @@ import com.fusionx.bus.Subscribe;
 import com.fusionx.lightirc.R;
 import com.fusionx.lightirc.event.OnChannelMentionEvent;
 import com.fusionx.lightirc.event.OnPreferencesChangedEvent;
+import com.fusionx.lightirc.event.OnQueryEvent;
 import com.fusionx.lightirc.logging.IRCLoggingManager;
 import com.fusionx.lightirc.misc.AppPreferences;
 import com.fusionx.lightirc.misc.EventCache;
@@ -20,6 +21,9 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.BitmapDrawable;
 import android.os.Binder;
 import android.os.Environment;
 import android.os.Handler;
@@ -28,7 +32,6 @@ import android.util.Pair;
 
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import gnu.trove.map.hash.THashMap;
@@ -44,6 +47,8 @@ public class IRCService extends Service {
 
     private static final int SERVICE_ID = 1;
 
+    private static final String DISCONNECT_ALL_INTENT = "com.fusionx.lightirc.disconnect_all";
+
     private final BroadcastReceiver mExternalStorageReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -51,10 +56,32 @@ public class IRCService extends Service {
         }
     };
 
+    private final BroadcastReceiver mDisconnectAllReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            for (final Map.Entry<Server, ServiceEventInterceptor> server : mEventHelperMap
+                    .entrySet()) {
+                mEventHelperMap.get(server.getKey()).unregister();
+            }
+
+            final NotificationManager notificationManager =
+                    (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            notificationManager.cancel(NOTIFICATION_MENTION);
+
+            mConnectionManager.requestDisconnectAll();
+            stopForeground(true);
+        }
+    };
+
     private final Object mEventHelper = new Object() {
         @Subscribe
         public void onMentioned(final OnChannelMentionEvent event) {
-            notifyOutOfApp(IRCService.this, event);
+            notifyOutOfApp(IRCService.this, event.channel);
+        }
+
+        @Subscribe
+        public void onQueried(final OnQueryEvent event) {
+            notifyOutOfApp(IRCService.this, event.queryUser);
         }
 
         @Subscribe
@@ -67,7 +94,7 @@ public class IRCService extends Service {
 
     private final IRCBinder mBinder = new IRCBinder();
 
-    private final Map<Server, ServiceEventHelper> mEventHelperMap = new THashMap<>();
+    private final Map<Server, ServiceEventInterceptor> mEventHelperMap = new THashMap<>();
 
     private final Map<Server, EventCache> mEventCache = new HashMap<>();
 
@@ -101,17 +128,6 @@ public class IRCService extends Service {
         }
     }
 
-    private void onFirstStart() {
-        if (mFirstStart) {
-            mAppPreferences = AppPreferences.getAppPreferences();
-            mLoggingManager = new IRCLoggingManager(this, mAppPreferences);
-            startWatchingExternalStorage();
-            getBus().register(mEventHelper, SERVICE_PRIORITY);
-
-            mFirstStart = false;
-        }
-    }
-
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -119,6 +135,7 @@ public class IRCService extends Service {
         // Unregister observer status
         stopWatchingExternalStorage();
         getBus().unregister(mEventHelper);
+        unregisterReceiver(mDisconnectAllReceiver);
     }
 
     @Override
@@ -137,8 +154,9 @@ public class IRCService extends Service {
         final Server server = pair.second;
 
         if (!exists) {
-            final ServiceEventHelper serviceEventHelper = new ServiceEventHelper(server);
-            mEventHelperMap.put(server, serviceEventHelper);
+            final ServiceEventInterceptor serviceEventInterceptor = new ServiceEventInterceptor(
+                    server);
+            mEventHelperMap.put(server, serviceEventInterceptor);
             mEventCache.put(server, new EventCache(this));
             mLoggingManager.addServerToManager(server);
         }
@@ -181,12 +199,25 @@ public class IRCService extends Service {
         return PendingIntent.getActivity(this, 0, intent, 0);
     }
 
-    public ServiceEventHelper getEventHelper(final Server server) {
+    public ServiceEventInterceptor getEventHelper(final Server server) {
         return mEventHelperMap.get(server);
     }
 
     public EventCache getEventCache(Server server) {
         return mEventCache.get(server);
+    }
+
+    private void onFirstStart() {
+        if (mFirstStart) {
+            AppPreferences.setupAppPreferences(this);
+            mAppPreferences = AppPreferences.getAppPreferences();
+            mLoggingManager = new IRCLoggingManager(this, mAppPreferences);
+            startWatchingExternalStorage();
+            getBus().register(mEventHelper, SERVICE_PRIORITY);
+            registerReceiver(mDisconnectAllReceiver, new IntentFilter(DISCONNECT_ALL_INTENT));
+
+            mFirstStart = false;
+        }
     }
 
     private void startWatchingExternalStorage() {
@@ -221,11 +252,19 @@ public class IRCService extends Service {
 
     private Notification getNotification() {
         final Builder builder = new Builder(this);
-        builder.setSmallIcon(R.drawable.ic_notification);
+        Bitmap icon = BitmapFactory.decodeResource(getResources(), R.drawable.ic_notification);
+        builder.setLargeIcon(icon);
         builder.setContentTitle(getString(R.string.app_name));
-        builder.setContentText(String.format("%d servers connected",
-                mConnectionManager.getServerCount()));
+        final String text = String.format("%d servers connected",
+                mConnectionManager.getServerCount());
+        builder.setContentText(text);
+        builder.setTicker(text);
+        builder.setSmallIcon(R.drawable.ic_notification_small);
         builder.setContentIntent(getMainActivityIntent());
+
+        final PendingIntent intent = PendingIntent.getBroadcast(this, 199,
+                new Intent(DISCONNECT_ALL_INTENT), PendingIntent.FLAG_UPDATE_CURRENT);
+        builder.addAction(R.drawable.ic_action_cancel, "Disconnect all", intent);
 
         return builder.build();
     }
